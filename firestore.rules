@@ -1,0 +1,15 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow access to FCM tokens for all users
+    match /fcm_tokens/{token} {
+      allow read, write: if true;
+    }
+    
+    // Default rule - allow all access for testing
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+} 
