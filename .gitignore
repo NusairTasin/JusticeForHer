@@ -44,3 +44,39 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 .env
+
+# Additional build artifacts
+**/build/
+**/android/**/build/
+**/ios/**/build/
+**/macos/**/build/
+**/linux/**/build/
+**/windows/**/build/
+
+# APK files
+*.apk
+*.aab
+
+# Large binary files
+*.so
+*.dll
+*.dylib
+
+# Generated files
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+
+# Firebase
+google-services.json
+GoogleService-Info.plist
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
