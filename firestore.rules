@@ -4,7 +4,8 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // Enhanced user data protection
     match /users/{userId} {
-      allow read, write: if request.auth != null 
+      allow read: if request.auth != null; // Allow any authenticated user to read user data
+      allow write: if request.auth != null 
         && request.auth.uid == userId
         && (resource == null || isValidUserData(request.resource.data));
     }
@@ -15,7 +16,8 @@ service cloud.firestore {
       allow create: if request.auth != null 
         && isValidAlert(request.resource.data)
         && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if false; // Alerts should be immutable
+      allow update, delete: if request.auth != null 
+        && request.auth.uid == resource.data.userId;
     }
     
     // FCM tokens for notifications

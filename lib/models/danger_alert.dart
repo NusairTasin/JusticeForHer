@@ -25,6 +25,27 @@ class DangerAlert {
 
   factory DangerAlert.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+
+    // Handle timestamp conversion with error handling
+    DateTime timestamp;
+    try {
+      final timestampData = data['timestamp'];
+      if (timestampData is Timestamp) {
+        timestamp = timestampData.toDate();
+      } else if (timestampData is DateTime) {
+        timestamp = timestampData;
+      } else {
+        // Fallback to current time if timestamp is invalid
+        print(
+          'Warning: Invalid timestamp for alert ${doc.id}, using current time',
+        );
+        timestamp = DateTime.now();
+      }
+    } catch (e) {
+      print('Error converting timestamp for alert ${doc.id}: $e');
+      timestamp = DateTime.now();
+    }
+
     return DangerAlert(
       id: doc.id,
       userId: data['userId'] ?? '',
@@ -34,7 +55,7 @@ class DangerAlert {
       emergencyContactPhone: data['emergencyContactPhone'] ?? '',
       latitude: (data['latitude'] ?? 0.0).toDouble(),
       longitude: (data['longitude'] ?? 0.0).toDouble(),
-      timestamp: (data['timestamp'] as Timestamp).toDate(),
+      timestamp: timestamp,
     );
   }
 

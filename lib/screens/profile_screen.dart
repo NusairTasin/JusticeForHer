@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/firebase_service.dart';
 import '../models/user_profile.dart';
+import 'notification_settings_screen.dart';
 import 'dart:async';
 
 class ProfileScreen extends StatefulWidget {
@@ -48,29 +49,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
 
     // First try to get profile directly
-    _firebaseService.getUserProfile(user.uid).then((profile) {
-      if (mounted) {
-        setState(() {
-          _cachedProfile = profile;
-          _isLoading = false;
+    _firebaseService
+        .getUserProfile(user.uid)
+        .then((profile) {
+          if (mounted) {
+            setState(() {
+              _cachedProfile = profile;
+              _isLoading = false;
+            });
+
+            // Then set up the stream for real-time updates
+            _setupProfileStream(user.uid);
+          }
+        })
+        .catchError((error) {
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+              _errorMessage = _getErrorMessage(error);
+            });
+          }
         });
-        
-        // Then set up the stream for real-time updates
-        _setupProfileStream(user.uid);
-      }
-    }).catchError((error) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = _getErrorMessage(error);
-        });
-      }
-    });
   }
 
   void _setupProfileStream(String uid) {
     _profileSubscription?.cancel();
-    
+
     _profileSubscription = _firebaseService
         .getUserProfileStream(uid)
         .listen(
@@ -102,7 +106,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   String _getErrorMessage(dynamic error) {
     final errorStr = error.toString().toLowerCase();
-    
+
     if (errorStr.contains('timeout')) {
       return 'Connection timeout. Please check your internet connection.';
     } else if (errorStr.contains('network')) {
@@ -117,13 +121,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _retryLoadProfile() async {
     if (_isRetrying) return;
-    
+
     setState(() {
       _isRetrying = true;
     });
-    
+
     await Future.delayed(const Duration(milliseconds: 500));
-    
+
     if (mounted) {
       setState(() {
         _isRetrying = false;
@@ -139,30 +143,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.error_outline,
-              size: 64,
-              color: Colors.red.shade400,
-            ),
+            Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
             const SizedBox(height: 16),
             Text(
               'Profile Unavailable',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
               _errorMessage ?? 'Unknown error occurred',
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey.shade600,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600),
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: _isRetrying ? null : _retryLoadProfile,
-              icon: _isRetrying 
+              icon: _isRetrying
                   ? const SizedBox(
                       width: 16,
                       height: 16,
@@ -173,7 +173,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
               ),
             ),
           ],
@@ -198,6 +201,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _signOut() async {
     try {
       await _firebaseService.signOut();
+      if (mounted) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -217,19 +223,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         title: const Text('Profile'),
         backgroundColor: Colors.blue,
         foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: _signOut,
-            tooltip: 'Sign Out',
-          ),
-        ],
       ),
       body: _isLoading
           ? _buildLoadingState()
           : _errorMessage != null
-              ? _buildErrorState()
-              : _buildProfileContent(),
+          ? _buildErrorState()
+          : _buildProfileContent(),
     );
   }
 
@@ -260,6 +259,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _buildInfoRow('Name', profile.emergencyContactName),
             _buildInfoRow('Phone', profile.emergencyContactPhone),
           ]),
+          const SizedBox(height: 16),
+          _buildInfoCard('Settings', [
+            ListTile(
+              leading: const Icon(Icons.notifications, color: Colors.blue),
+              title: const Text('Notification Settings'),
+              subtitle: const Text('Manage your notification preferences'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const NotificationSettingsScreen(),
+                  ),
+                );
+              },
+            ),
+          ]),
           const SizedBox(height: 32),
           SizedBox(
             width: double.infinity,
@@ -289,10 +305,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             Text(
               title,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             ...children,
