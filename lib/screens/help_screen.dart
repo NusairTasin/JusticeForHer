@@ -15,7 +15,6 @@ class HelpScreen extends StatefulWidget {
 class _HelpScreenState extends State<HelpScreen> {
   Position? _currentPosition;
   final LocationService _locationService = LocationService.instance;
-  final LocationService _locationService = LocationService.instance;
   final DijkstraService _dijkstraService = DijkstraService();
   bool _isLoading = true;
   String? _errorMessage;
@@ -270,12 +269,6 @@ class _HelpScreenState extends State<HelpScreen> {
               onPressed: _refreshLocation,
               tooltip: 'Update Location',
             ),
-          if (_currentPosition != null)
-            IconButton(
-              icon: const Icon(Icons.my_location),
-              onPressed: _refreshLocation,
-              tooltip: 'Update Location',
-            ),
         ],
       ),
       body: _isLoading
@@ -312,13 +305,7 @@ class _HelpScreenState extends State<HelpScreen> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(8),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              border: Border.all(color: Colors.grey.shade300),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -413,16 +400,23 @@ class _GraphMapPainter extends CustomPainter {
         node.position.dx * size.width,
         node.position.dy * size.height,
       );
+
+      // Create flat 2D paint for nodes
+      final nodePaint = Paint()
+        ..style = PaintingStyle.fill
+        ..strokeWidth = 1.0;
+
       if (node.id == userNodeId) {
-        paint.color = Colors.blue;
-        paint.style = PaintingStyle.fill;
-        canvas.drawCircle(pos, 14, paint);
-        paint.color = Colors.white;
+        // User node - blue circle
+        nodePaint.color = Colors.blue;
+        canvas.drawCircle(pos, 14, nodePaint);
+
+        // White text
         final tp = TextPainter(
           text: TextSpan(
             text: node.name,
             style: const TextStyle(
-              color: Colors.blue,
+              color: Colors.white,
               fontWeight: FontWeight.bold,
               fontSize: 14,
             ),
@@ -432,15 +426,16 @@ class _GraphMapPainter extends CustomPainter {
         tp.layout();
         tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
       } else if (node.id == nearestStationNodeId) {
-        paint.color = Colors.green;
-        paint.style = PaintingStyle.fill;
-        canvas.drawCircle(pos, 12, paint);
-        paint.color = Colors.white;
+        // Nearest station - green circle
+        nodePaint.color = Colors.green;
+        canvas.drawCircle(pos, 12, nodePaint);
+
+        // White text
         final tp = TextPainter(
           text: TextSpan(
             text: node.name,
             style: const TextStyle(
-              color: Colors.green,
+              color: Colors.white,
               fontWeight: FontWeight.bold,
               fontSize: 12,
             ),
@@ -450,15 +445,16 @@ class _GraphMapPainter extends CustomPainter {
         tp.layout();
         tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
       } else {
-        paint.color = Colors.red;
-        paint.style = PaintingStyle.fill;
-        canvas.drawCircle(pos, 10, paint);
-        paint.color = Colors.white;
+        // Other stations - red circle
+        nodePaint.color = Colors.red;
+        canvas.drawCircle(pos, 10, nodePaint);
+
+        // White text
         final tp = TextPainter(
           text: TextSpan(
             text: node.name,
             style: const TextStyle(
-              color: Colors.red,
+              color: Colors.white,
               fontWeight: FontWeight.bold,
               fontSize: 10,
             ),

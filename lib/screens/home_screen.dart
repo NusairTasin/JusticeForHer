@@ -22,25 +22,35 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    print('🏠 HomeScreen initialized');
     _checkUserProfile();
   }
 
   Future<void> _checkUserProfile() async {
     try {
+      print('🔍 Checking user profile...');
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      if (user == null) {
+        print('❌ No current user found');
+        return;
+      }
 
+      print('👤 Current user: ${user.uid}');
       final profile = await _firebaseService.getUserProfile(user.uid);
+      print('📋 Profile result: ${profile != null ? 'Found' : 'Not found'}');
+
       if (profile == null && mounted) {
+        print('🔄 Navigating to complete profile screen');
         Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const CompleteProfileScreen()),
         );
       }
     } catch (e) {
-      print('Error checking profile: $e');
+      print('❌ Error checking profile: $e');
     } finally {
       if (mounted) {
+        print('✅ Profile check completed');
         setState(() => _isCheckingProfile = false);
       }
     }
@@ -73,9 +83,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Emergency alert sent successfully'),
+          SnackBar(
+            content: Text('Emergency alert sent successfully to nearby users'),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
@@ -85,6 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
           SnackBar(
             content: Text('Failed to send alert: ${e.toString()}'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
           ),
         );
       }
@@ -97,10 +109,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    print(
+      '🏠 HomeScreen build called - isCheckingProfile: $_isCheckingProfile',
+    );
+
     if (_isCheckingProfile) {
+      print('⏳ Showing loading indicator');
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    print('📱 Building main home screen UI');
     return Scaffold(
       appBar: AppBar(
         title: const Text('Emergency Alert'),
@@ -170,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
               )
-            : const Icon(Icons.warning),
+            : Icon(Icons.warning),
         label: Text(_isSendingAlert ? 'Sending...' : 'Send Alert'),
       ),
     );

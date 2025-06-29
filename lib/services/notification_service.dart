@@ -5,6 +5,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/danger_alert.dart';
 import 'dart:async';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:io';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -22,6 +25,17 @@ class NotificationService {
   Set<String> _processedAlertIds =
       {}; // Use Set to track multiple processed alerts
   DateTime? _lastListenerSetup; // Track when listener was last set up
+  int _retryCount = 0; // Track retry attempts for Firestore listener
+
+  /// Check network connectivity
+  Future<bool> _checkNetworkConnectivity() async {
+    try {
+      final result = await InternetAddress.lookup('google.com');
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } on SocketException catch (_) {
+      return false;
+    }
+  }
 
   /// Initialize notification services
   Future<void> initialize() async {
@@ -30,20 +44,51 @@ class NotificationService {
     try {
       print('🚀 Initializing NotificationService...');
 
-      // Initialize local notifications
+      // Check network connectivity first
+      final isConnected = await _checkNetworkConnectivity();
+      if (!isConnected) {
+        print(
+          '⚠️ No internet connection available. Initializing local notifications only.',
+        );
+        await _initializeLocalNotifications();
+        _isInitialized = true;
+        return;
+      }
+
+      // Initialize local notifications first (this should always work)
       await _initializeLocalNotifications();
 
-      // Initialize Firebase messaging
-      await _initializeFirebaseMessaging();
+      // Try to initialize Firebase messaging (but don't block if it fails)
+      try {
+        await _initializeFirebaseMessaging();
+        print('✅ Firebase messaging initialized successfully');
+      } catch (e) {
+        print('⚠️ Firebase messaging failed to initialize: $e');
+        print('📱 Continuing with local notifications only');
+      }
 
-      // Listen to danger alerts from Firestore
-      _listenToDangerAlerts();
+      // Try to set up Firestore listener (but don't block if it fails)
+      try {
+        _listenToDangerAlerts();
+        print('✅ Firestore listener set up successfully');
+      } catch (e) {
+        print('⚠️ Firestore listener failed to set up: $e');
+        print('📱 Continuing without Firestore real-time updates');
+      }
 
       _isInitialized = true;
       print('✅ Notification service initialized successfully');
     } catch (e) {
       print('❌ Failed to initialize notification service: $e');
-      rethrow;
+      // Still initialize local notifications even if everything else fails
+      try {
+        await _initializeLocalNotifications();
+        print('✅ Local notifications initialized as fallback');
+        _isInitialized = true;
+      } catch (localError) {
+        print('❌ Failed to initialize local notifications: $localError');
+        // Don't rethrow - we want the app to continue even if notifications fail
+      }
     }
   }
 
@@ -195,111 +240,211 @@ class NotificationService {
 
       print('🔥 Setting up Firestore listener for danger alerts...');
 
-      // Get the current time to only process alerts created after this point
-      final listenerStartTime = DateTime.now();
-
-      _dangerAlertsSubscription = _firestore
-          .collection('danger_alerts')
-          .orderBy('timestamp', descending: true)
-          .limit(50) // Listen to more recent alerts
-          .snapshots()
-          .listen(
-            (snapshot) async {
-              try {
-                print(
-                  '🔥 Firestore listener triggered with ${snapshot.docs.length} documents',
-                );
-
-                // Process documents in chronological order (oldest first)
-                final sortedDocs = snapshot.docs.toList()
-                  ..sort((a, b) {
-                    final aData = a.data();
-                    final bData = b.data();
-                    final aTimestamp = aData['timestamp'] as Timestamp?;
-                    final bTimestamp = bData['timestamp'] as Timestamp?;
-
-                    if (aTimestamp == null || bTimestamp == null) return 0;
-                    return aTimestamp.compareTo(bTimestamp);
-                  });
-
-                for (final doc in sortedDocs) {
-                  try {
-                    final alert = DangerAlert.fromFirestore(doc);
-
-                    // Skip if we've already processed this alert
-                    if (_processedAlertIds.contains(alert.id)) {
-                      continue;
-                    }
-
-                    // Skip if this alert was created before the listener started
-                    if (alert.timestamp.isBefore(
-                      listenerStartTime.subtract(const Duration(seconds: 30)),
-                    )) {
-                      print(
-                        '🔥 Skipping alert created before listener: ${alert.id} (${alert.timestamp})',
-                      );
-                      _processedAlertIds.add(
-                        alert.id,
-                      ); // Mark as processed to avoid future checks
-                      continue;
-                    }
-
-                    // Skip if this is an old alert (older than 5 minutes)
-                    final alertAge = DateTime.now().difference(alert.timestamp);
-                    if (alertAge.inMinutes > 5) {
-                      print(
-                        '🔥 Skipping old alert: ${alert.id} (age: ${alertAge.inMinutes}m)',
-                      );
-                      _processedAlertIds.add(alert.id); // Mark as processed
-                      continue;
-                    }
-
-                    // Get current user ID
-                    final currentUser = _auth.currentUser;
-                    if (currentUser != null &&
-                        currentUser.uid == alert.userId) {
-                      // Prevent sender from receiving their own alert notification
-                      _processedAlertIds.add(alert.id);
-                      print('🔥 Skipping own alert: ${alert.id}');
-                      continue;
-                    }
-
-                    // Show notification and mark as processed
-                    print(
-                      '🔥 Processing new alert: ${alert.id} from ${alert.userName} (${alert.timestamp})',
-                    );
-                    _showDangerAlertNotification(alert);
-                    _processedAlertIds.add(alert.id);
-
-                    // Clean up old processed IDs (keep only last 100)
-                    if (_processedAlertIds.length > 100) {
-                      _processedAlertIds = _processedAlertIds.take(100).toSet();
-                    }
-                  } catch (e) {
-                    print('❌ Error processing individual alert ${doc.id}: $e');
-                    // Mark as processed to avoid repeated errors
-                    _processedAlertIds.add(doc.id);
-                  }
-                }
-              } catch (e) {
-                print('❌ Error processing danger alert batch: $e');
-              }
-            },
-            onError: (error) {
-              print('❌ Error in danger alerts stream: $error');
-              // Retry listener after error
-              Future.delayed(const Duration(seconds: 5), () {
+      // Check network connectivity before setting up listener
+      _checkNetworkConnectivity()
+          .then((isConnected) {
+            if (!isConnected) {
+              print(
+                '🌐 No network connection. Skipping Firestore listener setup.',
+              );
+              // Retry when network is available
+              Future.delayed(const Duration(seconds: 30), () {
                 if (_isInitialized) {
-                  print('🔄 Retrying Firestore listener...');
+                  print(
+                    '🔄 Retrying Firestore listener setup after network check...',
+                  );
                   _listenToDangerAlerts();
                 }
               });
-            },
-          );
+              return;
+            }
 
-      print('✅ Firestore listener set up successfully');
+            // Get the current time to only process alerts created after this point
+            final listenerStartTime = DateTime.now();
+
+            _dangerAlertsSubscription = _firestore
+                .collection('danger_alerts')
+                .orderBy('timestamp', descending: true)
+                .limit(50) // Listen to more recent alerts
+                .snapshots()
+                .listen(
+                  (snapshot) async {
+                    try {
+                      print(
+                        '🔥 Firestore listener triggered with ${snapshot.docs.length} documents',
+                      );
+
+                      // Process documents in chronological order (oldest first)
+                      final sortedDocs = snapshot.docs.toList()
+                        ..sort((a, b) {
+                          final aData = a.data();
+                          final bData = b.data();
+                          final aTimestamp = aData['timestamp'] as Timestamp?;
+                          final bTimestamp = bData['timestamp'] as Timestamp?;
+
+                          if (aTimestamp == null || bTimestamp == null)
+                            return 0;
+                          return aTimestamp.compareTo(bTimestamp);
+                        });
+
+                      for (final doc in sortedDocs) {
+                        try {
+                          final alert = DangerAlert.fromFirestore(doc);
+
+                          // Skip if we've already processed this alert
+                          if (_processedAlertIds.contains(alert.id)) {
+                            continue;
+                          }
+
+                          // Skip if this alert was created before the listener started
+                          if (alert.timestamp.isBefore(
+                            listenerStartTime.subtract(
+                              const Duration(seconds: 30),
+                            ),
+                          )) {
+                            print(
+                              '🔥 Skipping alert created before listener: ${alert.id} (${alert.timestamp})',
+                            );
+                            _processedAlertIds.add(
+                              alert.id,
+                            ); // Mark as processed to avoid future checks
+                            continue;
+                          }
+
+                          // Skip if this is an old alert (older than 5 minutes)
+                          final alertAge = DateTime.now().difference(
+                            alert.timestamp,
+                          );
+                          if (alertAge.inMinutes > 5) {
+                            print(
+                              '🔥 Skipping old alert: ${alert.id} (age: ${alertAge.inMinutes}m)',
+                            );
+                            _processedAlertIds.add(
+                              alert.id,
+                            ); // Mark as processed
+                            continue;
+                          }
+
+                          // Get current user ID
+                          final currentUser = _auth.currentUser;
+                          if (currentUser != null &&
+                              currentUser.uid == alert.userId) {
+                            // Prevent sender from receiving their own alert notification
+                            _processedAlertIds.add(alert.id);
+                            print('🔥 Skipping own alert: ${alert.id}');
+                            continue;
+                          }
+
+                          // Show notification and mark as processed
+                          print(
+                            '🔥 Processing new alert: ${alert.id} from ${alert.userName} (${alert.timestamp})',
+                          );
+                          _showDangerAlertNotification(alert);
+                          _processedAlertIds.add(alert.id);
+
+                          // Clean up old processed IDs (keep only last 100)
+                          if (_processedAlertIds.length > 100) {
+                            _processedAlertIds = _processedAlertIds
+                                .take(100)
+                                .toSet();
+                          }
+                        } catch (e) {
+                          print(
+                            '❌ Error processing individual alert ${doc.id}: $e',
+                          );
+                          // Mark as processed to avoid repeated errors
+                          _processedAlertIds.add(doc.id);
+                        }
+                      }
+                    } catch (e) {
+                      print('❌ Error processing danger alert batch: $e');
+                    }
+                  },
+                  onError: (error) {
+                    print('❌ Error in danger alerts stream: $error');
+
+                    // Check if it's a network connectivity issue
+                    if (error.toString().contains('UNAVAILABLE') ||
+                        error.toString().contains('Unable to resolve host')) {
+                      print(
+                        '🌐 Network connectivity issue detected. Will retry when connection is restored.',
+                      );
+
+                      // Retry with exponential backoff
+                      _retryFirestoreListener();
+                    } else {
+                      // For other errors, retry immediately
+                      Future.delayed(const Duration(seconds: 5), () {
+                        if (_isInitialized) {
+                          print('🔄 Retrying Firestore listener...');
+                          _listenToDangerAlerts();
+                        }
+                      });
+                    }
+                  },
+                );
+
+            print('✅ Firestore listener set up successfully');
+          })
+          .catchError((e) {
+            print('❌ Failed to check network connectivity: $e');
+            // Retry after delay
+            Future.delayed(const Duration(seconds: 10), () {
+              if (_isInitialized) {
+                print(
+                  '🔄 Retrying Firestore listener after connectivity error...',
+                );
+                _listenToDangerAlerts();
+              }
+            });
+          });
     } catch (e) {
       print('❌ Failed to set up danger alerts listener: $e');
+      // Retry after delay
+      Future.delayed(const Duration(seconds: 10), () {
+        if (_isInitialized) {
+          print('🔄 Retrying Firestore listener setup after error...');
+          _listenToDangerAlerts();
+        }
+      });
+    }
+  }
+
+  /// Retry Firestore listener with exponential backoff
+  void _retryFirestoreListener() {
+    const int maxRetries = 5;
+
+    if (_retryCount < maxRetries) {
+      final delay = Duration(
+        seconds: (2 * _retryCount + 1),
+      ); // 1, 3, 5, 7, 9 seconds
+      _retryCount++;
+
+      print(
+        '🔄 Retrying Firestore listener in ${delay.inSeconds} seconds (attempt $_retryCount/$maxRetries)',
+      );
+
+      Future.delayed(delay, () async {
+        if (_isInitialized) {
+          // Check network connectivity before retrying
+          final isConnected = await _checkNetworkConnectivity();
+          if (isConnected) {
+            print(
+              '🌐 Network connection restored. Retrying Firestore listener...',
+            );
+            _retryCount = 0; // Reset retry count on success
+            _listenToDangerAlerts();
+          } else {
+            print('🌐 Still no network connection. Will retry later...');
+            _retryFirestoreListener(); // Continue retrying
+          }
+        }
+      });
+    } else {
+      print(
+        '❌ Max retry attempts reached. Firestore listener will not be retried.',
+      );
+      _retryCount = 0; // Reset for next initialization
     }
   }
 
@@ -447,47 +592,27 @@ class NotificationService {
 
   /// Subscribe to topic for broadcast notifications
   Future<void> subscribeToTopic(String topic) async {
-    try {
-      await _firebaseMessaging.subscribeToTopic(topic);
-      print('✅ Subscribed to topic: $topic');
-    } catch (e) {
-      print('❌ Failed to subscribe to topic: $e');
-    }
+    // Simplified - no longer needed since we use Firestore listeners
+    print('ℹ️ Topic subscription not needed with Firestore listeners');
   }
 
   /// Unsubscribe from topic
   Future<void> unsubscribeFromTopic(String topic) async {
-    try {
-      await _firebaseMessaging.unsubscribeFromTopic(topic);
-      print('✅ Unsubscribed from topic: $topic');
-    } catch (e) {
-      print('❌ Failed to unsubscribe from topic: $e');
-    }
+    // Simplified - no longer needed since we use Firestore listeners
+    print('ℹ️ Topic unsubscription not needed with Firestore listeners');
   }
 
   /// Get FCM token
   Future<String?> getToken() async {
-    try {
-      return await _firebaseMessaging.getToken();
-    } catch (e) {
-      print('❌ Failed to get FCM token: $e');
-      return null;
-    }
+    // Simplified - no longer needed since we use Firestore listeners
+    print('ℹ️ FCM token not needed with Firestore listeners');
+    return null;
   }
 
   /// Save FCM token to user profile
   Future<void> saveTokenToUserProfile(String userId) async {
-    try {
-      String? token = await getToken();
-      if (token != null) {
-        await _firestore.collection('users').doc(userId).update({
-          'fcmToken': token,
-        });
-        print('✅ FCM token saved to user profile');
-      }
-    } catch (e) {
-      print('❌ Failed to save FCM token: $e');
-    }
+    // Simplified - no longer needed since we use Firestore listeners
+    print('ℹ️ FCM token saving not needed with Firestore listeners');
   }
 
   /// Send test notification
@@ -504,6 +629,45 @@ class NotificationService {
     } catch (e) {
       print('❌ Failed to send test notification: $e');
       rethrow;
+    }
+  }
+
+  /// Send emergency test notification
+  Future<void> sendEmergencyTestNotification() async {
+    try {
+      await _showLocalNotification(
+        title: '🚨 Emergency Test Alert',
+        body:
+            'This is a test emergency alert - please respond if you receive this!',
+        payload: 'emergency_test_notification',
+        importance: Importance.max,
+        priority: Priority.max,
+      );
+      print('✅ Emergency test notification sent');
+    } catch (e) {
+      print('❌ Failed to send emergency test notification: $e');
+      rethrow;
+    }
+  }
+
+  /// Check if notifications are working
+  Future<bool> testNotificationSystem() async {
+    try {
+      print('🧪 Testing notification system...');
+
+      // Test local notifications
+      await sendTestNotification();
+
+      // Test network connectivity
+      final isConnected = await _checkNetworkConnectivity();
+      print(
+        '🌐 Network connectivity: ${isConnected ? "Connected" : "Disconnected"}',
+      );
+
+      return true;
+    } catch (e) {
+      print('❌ Notification system test failed: $e');
+      return false;
     }
   }
 
@@ -526,6 +690,21 @@ class NotificationService {
     } catch (e) {
       print('❌ Failed to check notification settings: $e');
       return false;
+    }
+  }
+
+  /// Send danger alert notification (simplified - uses Firestore listener)
+  Future<void> sendDangerAlertToNearbyUsers(DangerAlert alert) async {
+    try {
+      print('📤 Danger alert created: ${alert.userName}');
+
+      // The Firestore listener will automatically show notifications
+      // This method is kept for compatibility but doesn't need to do anything
+      // since the _listenToDangerAlerts() method handles all notifications
+
+      print('✅ Alert will be processed by Firestore listener');
+    } catch (e) {
+      print('❌ Error processing danger alert: $e');
     }
   }
 }

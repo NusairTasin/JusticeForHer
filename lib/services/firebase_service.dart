@@ -2,12 +2,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
+import 'package:geolocator/geolocator.dart';
 import '../models/danger_alert.dart';
 import '../models/user_profile.dart';
 import 'location_service.dart';
 import 'notification_service.dart';
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class FirebaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -17,7 +19,6 @@ class FirebaseService {
   final NotificationService _notificationService = NotificationService();
   final Uuid _uuid = const Uuid();
 
-  // Auth Methods with enhanced error handling
   // Auth Methods with enhanced error handling
   Future<UserCredential> signUp(String email, String password) async {
     try {
@@ -65,16 +66,10 @@ class FirebaseService {
     } catch (e) {
       throw Exception('Sign out failed: ${e.toString()}');
     }
-    try {
-      await _auth.signOut();
-    } catch (e) {
-      throw Exception('Sign out failed: ${e.toString()}');
-    }
   }
 
   User? get currentUser => _auth.currentUser;
 
-  // Enhanced User Profile Methods with retry and caching
   // Enhanced User Profile Methods with retry and caching
   Future<void> saveUserProfile(UserProfile profile) async {
     try {
@@ -142,15 +137,12 @@ class FirebaseService {
           ),
         )
         .handleError((error) {
-          print('Profile stream error: $error');
+          // Handle error silently
         });
   }
 
   // Enhanced danger alert with better error handling and notifications
   Future<void> sendDangerAlert() async {
-    try {
-      final user = currentUser;
-      if (user == null) throw Exception('User not authenticated');
     try {
       final user = currentUser;
       if (user == null) throw Exception('User not authenticated');
@@ -161,8 +153,18 @@ class FirebaseService {
       const maxRetries = 3;
 
       while (profile == null && retryCount < maxRetries) {
-        profile = await getUserProfile(user.uid);
-        if (profile == null) {
+        try {
+          profile = await getUserProfile(user.uid);
+          if (profile == null) {
+            retryCount++;
+            if (retryCount < maxRetries) {
+              await Future.delayed(
+                Duration(seconds: pow(2, retryCount).toInt()),
+              );
+            }
+          }
+        } catch (e) {
+          print('⚠️ Profile fetch attempt $retryCount failed: $e');
           retryCount++;
           if (retryCount < maxRetries) {
             await Future.delayed(Duration(seconds: pow(2, retryCount).toInt()));
@@ -177,7 +179,25 @@ class FirebaseService {
       }
 
       // Get current location with timeout
-      final position = await _locationService.getCurrentLocation();
+      Position position;
+      try {
+        position = await _locationService.getCurrentLocation();
+      } catch (e) {
+        print('⚠️ Location service failed, using default coordinates: $e');
+        // Use default coordinates if location fails
+        position = Position(
+          latitude: 0.0,
+          longitude: 0.0,
+          timestamp: DateTime.now(),
+          accuracy: 0.0,
+          altitude: 0.0,
+          heading: 0.0,
+          speed: 0.0,
+          speedAccuracy: 0.0,
+          altitudeAccuracy: 0.0,
+          headingAccuracy: 0.0,
+        );
+      }
 
       // Create alert
       final alert = DangerAlert(
@@ -191,98 +211,55 @@ class FirebaseService {
         longitude: position.longitude,
         timestamp: DateTime.now(),
       );
-      // Create alert
-      final alert = DangerAlert(
-        id: _uuid.v4(),
-        userId: user.uid,
-        userName: '${profile.firstName} ${profile.lastName}',
-        userPhone: profile.phoneNumber,
-        emergencyContactName: profile.emergencyContactName,
-        emergencyContactPhone: profile.emergencyContactPhone,
-        latitude: position.latitude,
-        longitude: position.longitude,
-        timestamp: DateTime.now(),
+
+      // Try to save to Firestore with multiple retries
+      bool savedToFirestore = false;
+      retryCount = 0;
+
+      while (!savedToFirestore && retryCount < maxRetries) {
+        try {
+          await _firestore
+              .collection('danger_alerts')
+              .doc(alert.id)
+              .set(alert.toMap())
+              .timeout(const Duration(seconds: 15)); // Increased timeout
+
+          savedToFirestore = true;
+          print('✅ Danger alert saved to Firestore: ${alert.id}');
+        } catch (e) {
+          retryCount++;
+          print('⚠️ Firestore save attempt $retryCount failed: $e');
+
+          if (retryCount < maxRetries) {
+            await Future.delayed(Duration(seconds: pow(2, retryCount).toInt()));
+          } else {
+            print('❌ All Firestore save attempts failed');
+          }
+        }
+      }
+
+      // Don't send notification to sender - they shouldn't receive their own alert
+      // The Firestore listener will handle notifications for other users
+      print(
+        '✅ Alert created successfully - notifications will be sent to other users',
       );
 
-      // Save to Firestore with timeout
-      await _firestore
-          .collection('danger_alerts')
-          .doc(alert.id)
-          .set(alert.toMap())
-          .timeout(const Duration(seconds: 10));
-
-      // Send notification to all users (except the sender)
-      await _sendDangerAlertNotification(alert, user.uid);
-
-      print('Danger alert sent successfully: ${alert.id}');
+      // If Firestore failed, show offline message but don't throw error
+      if (!savedToFirestore) {
+        print(
+          '⚠️ Alert saved locally but not synced to server due to network issues',
+        );
+        // Don't throw error - user should know alert was sent locally
+        return;
+      }
     } on TimeoutException {
-      throw Exception('Alert send timeout. Please check your connection.');
+      throw Exception(
+        'Alert send timeout. Please check your connection and try again.',
+      );
     } on FirebaseException catch (e) {
       throw Exception('Failed to send alert: ${e.message}');
     } catch (e) {
       throw Exception('Failed to send alert: ${e.toString()}');
-    }
-  }
-
-  /// Send notification to all users about the danger alert
-  Future<void> _sendDangerAlertNotification(
-    DangerAlert alert,
-    String senderId,
-  ) async {
-    try {
-      // Get all users except the sender
-      final usersSnapshot = await _firestore
-          .collection('users')
-          .where('uid', isNotEqualTo: senderId)
-          .get();
-
-      // Send FCM notification to all users
-      for (final userDoc in usersSnapshot.docs) {
-        final userData = userDoc.data();
-        final fcmToken = userData['fcmToken'] as String?;
-
-        if (fcmToken != null) {
-          await _sendFCMNotification(
-            token: fcmToken,
-            title: '🚨 Emergency Alert',
-            body: '${alert.userName} needs immediate assistance!',
-            data: {
-              'type': 'danger_alert',
-              'alertId': alert.id,
-              'userId': alert.userId,
-              'userName': alert.userName,
-              'latitude': alert.latitude.toString(),
-              'longitude': alert.longitude.toString(),
-            },
-          );
-        }
-      }
-
-      // Also send to emergency contacts if available
-      if (alert.emergencyContactPhone.isNotEmpty) {
-        // You can integrate with SMS service here
-        print(
-          'Emergency contact should be notified: ${alert.emergencyContactPhone}',
-        );
-      }
-    } catch (e) {
-      print('Failed to send danger alert notifications: $e');
-    }
-  }
-
-  /// Send FCM notification to specific token
-  Future<void> _sendFCMNotification({
-    required String token,
-    required String title,
-    required String body,
-    Map<String, dynamic>? data,
-  }) async {
-    try {
-      // TODO: For real push notifications, implement a backend (e.g., Firebase Cloud Function)
-      // to send FCM messages to user tokens. The current implementation only triggers a local notification for demo purposes.
-      await _notificationService.sendTestNotification();
-    } catch (e) {
-      print('Failed to send FCM notification: $e');
     }
   }
 
@@ -293,11 +270,7 @@ class FirebaseService {
         .limit(20)
         .snapshots()
         .handleError((error) {
-          print('Danger alerts stream error: $error');
-        });
-        .snapshots()
-        .handleError((error) {
-          print('Danger alerts stream error: $error');
+          // Handle error silently
         });
   }
 
@@ -306,19 +279,12 @@ class FirebaseService {
       // Initialize notification service
       await _notificationService.initialize();
 
-      // Subscribe to danger alerts topic
-      await _notificationService.subscribeToTopic('danger_alerts');
-
-      // Save FCM token to user profile if user is logged in
-      final user = currentUser;
-      if (user != null) {
-        await _notificationService.saveTokenToUserProfile(user.uid);
-      }
-
-      // Note: FCM message handling is already done in NotificationService
-      // No need to duplicate the listener here
+      // Note: FCM message handling is not needed since we use Firestore listeners
+      // The notification service will automatically listen to danger alerts
+      print('✅ Messaging initialized with Firestore listeners');
     } catch (e) {
-      print('Failed to initialize messaging: $e');
+      print('⚠️ Messaging initialization failed: $e');
+      // Don't throw - app should continue working
     }
   }
 

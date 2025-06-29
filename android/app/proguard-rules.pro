@@ -34,6 +34,12 @@
 -dontwarn com.google.firebase.**
 -dontwarn com.google.android.gms.**
 
+# Google Play Core rules (for deferred components)
+-dontwarn com.google.android.play.core.**
+-dontwarn com.google.android.play.core.splitcompat.**
+-dontwarn com.google.android.play.core.splitinstall.**
+-dontwarn com.google.android.play.core.tasks.**
+
 # Keep native methods
 -keepclasseswithmembernames class * {
     native <methods>;
