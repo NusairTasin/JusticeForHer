@@ -18,6 +18,7 @@ class FirebaseService {
   final Uuid _uuid = const Uuid();
 
   // Auth Methods with enhanced error handling
+  // Auth Methods with enhanced error handling
   Future<UserCredential> signUp(String email, String password) async {
     try {
       // Validate email format
@@ -64,10 +65,16 @@ class FirebaseService {
     } catch (e) {
       throw Exception('Sign out failed: ${e.toString()}');
     }
+    try {
+      await _auth.signOut();
+    } catch (e) {
+      throw Exception('Sign out failed: ${e.toString()}');
+    }
   }
 
   User? get currentUser => _auth.currentUser;
 
+  // Enhanced User Profile Methods with retry and caching
   // Enhanced User Profile Methods with retry and caching
   Future<void> saveUserProfile(UserProfile profile) async {
     try {
@@ -144,6 +151,9 @@ class FirebaseService {
     try {
       final user = currentUser;
       if (user == null) throw Exception('User not authenticated');
+    try {
+      final user = currentUser;
+      if (user == null) throw Exception('User not authenticated');
 
       // Get user profile with retry
       UserProfile? profile;
@@ -169,6 +179,18 @@ class FirebaseService {
       // Get current location with timeout
       final position = await _locationService.getCurrentLocation();
 
+      // Create alert
+      final alert = DangerAlert(
+        id: _uuid.v4(),
+        userId: user.uid,
+        userName: '${profile.firstName} ${profile.lastName}',
+        userPhone: profile.phoneNumber,
+        emergencyContactName: profile.emergencyContactName,
+        emergencyContactPhone: profile.emergencyContactPhone,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        timestamp: DateTime.now(),
+      );
       // Create alert
       final alert = DangerAlert(
         id: _uuid.v4(),
@@ -269,6 +291,10 @@ class FirebaseService {
         .collection('danger_alerts')
         .orderBy('timestamp', descending: true)
         .limit(20)
+        .snapshots()
+        .handleError((error) {
+          print('Danger alerts stream error: $error');
+        });
         .snapshots()
         .handleError((error) {
           print('Danger alerts stream error: $error');

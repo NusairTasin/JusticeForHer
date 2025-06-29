@@ -106,6 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('Emergency Alert'),
         backgroundColor: Colors.red,
         foregroundColor: Colors.white,
+        elevation: 0,
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: _firebaseService.getDangerAlerts(),

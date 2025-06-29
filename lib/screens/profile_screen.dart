@@ -298,6 +298,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildInfoCard(String title, List<Widget> children) {
     return Card(
       elevation: 2,
+      elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -305,7 +306,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           children: [
             Text(
               title,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 12),
             ...children,
@@ -320,6 +324,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: 80,
@@ -328,6 +333,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
               style: const TextStyle(
                 fontWeight: FontWeight.w500,
                 color: Colors.grey,
+              ),
+              style: const TextStyle(
+                fontWeight: FontWeight.w500,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value.isNotEmpty ? value : 'Not provided',
+              style: TextStyle(
+                color: value.isNotEmpty ? Colors.black : Colors.grey,
               ),
             ),
           ),

@@ -23,6 +23,7 @@ service cloud.firestore {
     // FCM tokens for notifications
     match /fcm_tokens/{token} {
       allow read, write: if request.auth != null;
+      allow read, write: if request.auth != null;
     }
     
     function isValidUserData(data) {
@@ -41,6 +42,23 @@ service cloud.firestore {
              data.latitude is number && data.latitude >= -90 && data.latitude <= 90 &&
              data.longitude is number && data.longitude >= -180 && data.longitude <= 180 &&
              data.timestamp is timestamp;
+    function isValidUserData(data) {
+      return data != null &&
+             data.keys().hasAll(['firstName', 'lastName', 'email', 'phoneNumber']) &&
+             data.firstName is string && data.firstName.size() > 0 &&
+             data.lastName is string && data.lastName.size() > 0 &&
+             data.email is string && data.email.matches('.*@.*\\..*') &&
+             data.phoneNumber is string && data.phoneNumber.size() > 0;
+    }
+    
+    function isValidAlert(data) {
+      return data != null &&
+             data.keys().hasAll(['userId', 'latitude', 'longitude', 'timestamp']) &&
+             data.userId is string && data.userId.size() > 0 &&
+             data.latitude is number && data.latitude >= -90 && data.latitude <= 90 &&
+             data.longitude is number && data.longitude >= -180 && data.longitude <= 180 &&
+             data.timestamp is timestamp;
     }
   }
+}
 }

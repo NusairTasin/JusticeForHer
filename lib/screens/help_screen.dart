@@ -15,6 +15,7 @@ class HelpScreen extends StatefulWidget {
 class _HelpScreenState extends State<HelpScreen> {
   Position? _currentPosition;
   final LocationService _locationService = LocationService.instance;
+  final LocationService _locationService = LocationService.instance;
   final DijkstraService _dijkstraService = DijkstraService();
   bool _isLoading = true;
   String? _errorMessage;
@@ -42,6 +43,7 @@ class _HelpScreenState extends State<HelpScreen> {
     });
 
     try {
+      // Get current location
       final position = await _locationService.getCurrentLocation();
       if (mounted) {
         setState(() {
@@ -262,6 +264,12 @@ class _HelpScreenState extends State<HelpScreen> {
         backgroundColor: Colors.blue,
         foregroundColor: Colors.white,
         actions: [
+          if (_currentPosition != null)
+            IconButton(
+              icon: const Icon(Icons.my_location),
+              onPressed: _refreshLocation,
+              tooltip: 'Update Location',
+            ),
           if (_currentPosition != null)
             IconButton(
               icon: const Icon(Icons.my_location),
